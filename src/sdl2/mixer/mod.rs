@@ -26,10 +26,13 @@ use std::ffi::{CString, CStr};
 use std::str::from_utf8;
 use std::borrow::ToOwned;
 use std::path::Path;
+use std::os;
 use libc::{c_int, uint16_t, c_double, c_uint};
 use ::get_error;
 use ::rwops::RWops;
 use ::version::Version;
+
+use audio::AudioFormatNum;
 
 // Setup linking for all targets.
 #[cfg(target_os="macos")]
@@ -368,6 +371,38 @@ pub fn unset_channel_finished() {
     }
 }
 
+pub trait EffectCallback: Send
+where Self::SampleType: AudioFormatNum + 'static
+{
+    type SampleType; // should probably use AudioFormat here instead
+
+    fn callback(&mut self, &mut [Self::SampleType]);
+}
+
+extern "C" fn effectfunc_callback_marshall<CB: EffectCallback>
+(chan: os::raw::c_int, stream: *mut os::raw::c_void, len: os::raw::c_int, userdata: *mut os::raw::c_void) {
+    use std::slice::from_raw_parts_mut;
+    use std::mem::{size_of, transmute};
+    unsafe {
+        let mut cb_userdata: &mut CB = transmute(userdata);
+        let buf: &mut [CB::SampleType] = from_raw_parts_mut(
+            stream as *mut CB::SampleType,
+            len as usize / size_of::<CB::SampleType>()
+        );
+
+        cb_userdata.callback(buf);
+    }
+}
+
+extern "C" fn effectdone_callback_marshall<CB: EffectCallback>
+(chan: os::raw::c_int, userdata: *mut os::raw::c_void) {
+    use std::mem::transmute;
+    unsafe {
+        // this gets dropped now, came alive in register_effect
+        let mut cb_userdata: Box<CB> = transmute(userdata);
+    }
+}
+
 impl Channel {
     /// Represent for all channels (-1)
     pub fn all() -> Channel {
@@ -599,6 +634,35 @@ impl Channel {
             Ok(())
         }
     }
+
+    /// Register a new user effect.
+    /// much like open_playback in audio subsystem
+    pub fn register_effect<CB: EffectCallback>(self, userdata: CB) -> Result<(), String> {
+        use std::mem::transmute;
+
+        let Channel(ch) = self;
+        let boxed = Box::new(userdata);
+        let ret = unsafe {
+            ffi::Mix_RegisterEffect(ch as c_int,
+            // why not like this?
+            //                      Some(audio_callback_marshall::<CB>) as ffi::Mix_EffectFunc_t,
+                                    Some(effectfunc_callback_marshall::<CB> as
+                                         extern "C" fn(arg1: os::raw::c_int,
+                                          arg2: *mut os::raw::c_void,
+                                          arg3: os::raw::c_int,
+                                          arg4: *mut os::raw::c_void)),
+                                    Some(effectdone_callback_marshall::<CB> as
+                                         extern "C" fn(arg1: os::raw::c_int,
+                                                       arg2: *mut os::raw::c_void)),
+                               transmute(boxed))
+        };
+        if ret == 0 {
+            Err(get_error())
+        } else {
+            Ok(())
+        }
+    }
+
 }
 
 /// Returns how many channels are currently playing.

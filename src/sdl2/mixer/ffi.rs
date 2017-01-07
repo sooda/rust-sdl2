@@ -35,12 +35,12 @@ pub const MUS_MODPLUG: c_uint = 9;
 pub type Struct__Mix_Music = c_void;
 pub type Mix_Music = Struct__Mix_Music;
 pub type Mix_EffectFunc_t = ::std::option::Option<extern "C" fn(arg1: c_int,
-                                                                  arg2: *const c_void,
+                                                                  arg2: *mut c_void,
                                                                   arg3: c_int,
-                                                                  arg4: *const c_void)
+                                                                  arg4: *mut c_void)
                                                                  >;
 pub type Mix_EffectDone_t = ::std::option::Option<extern "C" fn(arg1: c_int,
-                                                                  arg2: *const c_void)
+                                                                  arg2: *mut c_void)
                                                                  >;
 extern "C" {
     pub fn Mix_Linked_Version() -> *const SDL_version;
